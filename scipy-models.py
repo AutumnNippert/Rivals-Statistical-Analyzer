@@ -257,28 +257,25 @@ def train_and_save_model(model, X_train, y_train, X_test, y_test):
 
 
 if __name__ == '__main__':
-    # enemy_team = ['hulk', 'spider-man', 'black panther', 'magik', 'cloak & dagger', 'luna snow']
-    # # current_team = ['hulk', 'spider-man', 'namor']
-    # enemy_team_ids = [hero_to_id(hero) for hero in enemy_team]
-    # # current_team_ids = [hero_to_id(hero) for hero in current_team]
-    # hero_pool = all_heroes()
-    # model, scaler = perform_learn(LogisticRegression())
-    # best_team, win_prob = recommend_greedy_team(enemy_team_ids, hero_pool, model, scaler)
-    # print(f"Opponent Team: {[id_to_hero(id)for id in enemy_team_ids]}")
-    # print(f"Recommended Team: {[id_to_hero(id)for id in best_team]} with {win_prob:.2f} probability of winning")
-
-    # TRAINING TESTING
-    # models = []
-    # for i in range(10):
-
-    # Get coefficients as a DataFrame
     X_train, X_test, y_train, y_test = preprocess_data('match_data_*.json', split=0.2)
+
+    # write data to files
+    np.save('X_train.npy', X_train)
+    np.save('X_test.npy', X_test)
+    np.save('y_train.npy', y_train)
+    np.save('y_test.npy', y_test)
     
     #load model
     import pickle
     with open('model.pkl', 'rb') as f:
         model = pickle
         model = pickle.load(f)
+
+    # fit scaler
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+
 
     coef_df = pd.DataFrame(model['model'].coef_, index=model['model'].classes_)
 
