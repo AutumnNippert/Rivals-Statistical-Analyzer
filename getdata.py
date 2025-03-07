@@ -3,6 +3,9 @@ import dotenv
 import requests
 import os
 import json
+import time
+import logging
+from pathlib import Path
 
 config = dotenv.dotenv_values('.env')
 API_KEY = config['API_KEY']
@@ -105,7 +108,7 @@ def get_match_data(match_id):
         response.raise_for_status()
     except requests.exceptions.HTTPError as err:
         print(err)
-        exit(1)
+        return None
     # output to a json file called myData.json
     with open(output_file, 'w') as f:
         f.write(response.text)
@@ -183,21 +186,74 @@ def get_unique(json):
                 unique.append(player)
     return unique
 
-unique = get_unique(json.load(open('allPlayers.json')))
-print(json.dumps(unique, indent=4))
+# unique = get_unique(json.load(open('allPlayers.json')))
+# print(json.dumps(unique, indent=4))
 
-# in this directory, there are a bunch of files are stats_playeruid.json
+# # in this directory, there are a bunch of files are stats_playeruid.json
 
-successes = []
-for player in unique:
-    if os.path.exists(f'stats_{player['player_uid']}.json'):
-        print("Player already found; Skipping...")
-        pass
-    print("Updating Player: ", player['nick_name'])
-    res = update_user(player['player_uid'])
-    if res:
-        successes.append(player)
+# successes = []
+# for player in unique:
+#     if os.path.exists(f'stats_{player['player_uid']}.json'):
+#         print("Player already found; Skipping...")
+#         pass
+#     print("Updating Player: ", player['nick_name'])
+#     res = update_user(player['player_uid'])
+#     if res:
+#         successes.append(player)
 
-for player in successes:
-    print("Getting Stats for Player: ", player['nick_name'])
-    get_stats(player['player_uid'])
+# for player in successes:
+#     print("Getting Stats for Player: ", player['nick_name'])
+#     get_stats(player['player_uid'])
+
+# get player match histories from stats files
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+def process_stats_files():
+    """
+    Process all 'stats_*' files in the current directory.
+    For each player in the stats file, get their match history and match data.
+    """
+    for file_path in Path('.').glob('stats_*.json'):  # Matches 'stats_*' files
+        time.sleep(1)  # Rate limiting
+        player = file_path.stem.split('_')[1]  # Extract player UID from filename
+
+        logging.info(f"Getting Match History for player UID={player}")
+        try:
+            history = get_match_history(player)
+            time.sleep(1)  # Rate limiting
+        except Exception as e:
+            logging.error(f"Error getting match history for {player}: {e}, skipping")
+            continue
+
+        # Extract UIDs from match history
+        try:
+            uids = get_match_uids_from_match_history(history)
+            time.sleep(1)  # Rate limiting
+        except Exception as e:
+            logging.error(f"Error getting match UIDs for {player}: {e}, skipping")
+            continue
+
+        # Fetch match data for each UID
+        for uid in uids:
+            match_data_file = f"match_data_{uid}.json"
+            if Path(match_data_file).exists():
+                logging.info(f"Match data for {uid} already exists, skipping.")
+                continue
+
+            logging.info(f"Getting Match Data for {uid}")
+            try:
+                get_match_data(uid)
+                time.sleep(1)  # Rate limiting
+            except Exception as e:
+                logging.error(f"Error getting match data for {uid}: {e}, skipping")
+                continue
+
+        logging.info(f"Finished processing {file_path.name}")
+
+if __name__ == "__main__":
+    try:
+        process_stats_files()
+    except Exception as e:
+        logging.critical(f"Fatal error: {e}", exc_info=True)
