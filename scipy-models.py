@@ -255,16 +255,41 @@ def train_and_save_model(model, X_train, y_train, X_test, y_test):
     with open('model.pkl', 'wb') as f:
         pickle.dump(res, f)
 
+def add_teams_permutate(team, hero_pool) -> list:
+    """
+    Adds all possible teams to the team list
+    """
+    res = []
+    for hero in hero_pool:
+        if hero in team:
+            continue
+        new_team = team + [hero]
+        if len(new_team) == 6:
+            res.append(new_team)
+        else:
+            res += add_teams_permutate(new_team, hero_pool)
+    return res
+
+def fill_team_with_best(team1_ids, team2_ids, model, scaler):
+    # get permutations of team1
+    team1_perms = add_teams_permutate(team1_ids, all_heroes())
+
+    best_team = None
+    best_prob = 0
+    for team1 in team1_perms:
+        comp_vec = comp_to_binary_matrix_vector(team1 + team2_ids)
+        example_match = np.array([comp_vec])
+        example_match = scaler.transform(example_match)
+        prob = model.predict_proba(example_match)[0][1]
+        if prob > best_prob:
+            best_prob = prob
+            best_team = team1
+    
+    return best_team, best_prob
+
 
 if __name__ == '__main__':
     X_train, X_test, y_train, y_test = preprocess_data('match_data_*.json', split=0.2)
-
-    # write data to files
-    np.save('X_train.npy', X_train)
-    np.save('X_test.npy', X_test)
-    np.save('y_train.npy', y_train)
-    np.save('y_test.npy', y_test)
-    
     #load model
     import pickle
     with open('model.pkl', 'rb') as f:
@@ -277,36 +302,55 @@ if __name__ == '__main__':
     X_test = scaler.transform(X_test)
 
 
+    team1 = ['namor', 'thor', 'scarlet witch', 'the thing', 'invisible woman', 'luna snow']
+    team2 = ['magneto', 'hawkeye', 'black widow', 'black panther', 'mantis', 'cloak & dagger']
+    team1_ids = [hero_to_id(hero) for hero in team1]
+    team2_ids = [hero_to_id(hero) for hero in team2]
+
+    # team1, prob = (fill_team_with_best(team1_ids, team2_ids, model['model'], scaler)
+    
+    #get preduction
+    comp_vec = comp_to_binary_matrix_vector(team1_ids + team2_ids)
+    example_match = np.array([comp_vec])
+    example_match = scaler.transform(example_match)
+    prob = model['model'].predict_proba(example_match)
+    print(prob)
+    # probability of winning
+    print(f"Probability of winning: {prob[0][1]:.3f}")
+
+
     coef_df = pd.DataFrame(model['model'].coef_, index=model['model'].classes_)
 
-    probs = model['model'].predict_proba(X_train[:5])  # First 5 predictions
+    # probs = model['model'].predict_proba(X_train[:5])  # First 5 predictions
     # print the probs to 3 decimal places
     # print(np.round(probs, 3))
 
     
-    # print(f"Model: {model['model']}")
-    # print(f"Accuracy: {model['accuracy']}")
-    # print(f"Precision: {model['precision']}")
-    # print(f"Recall: {model['recall']}")
-    # print(f"F1: {model['f1']}")
-    # print()
+    print(f"Model: {model['model']}")
+    print(f"Accuracy: {model['accuracy']}")
+    print(f"Precision: {model['precision']}")
+    print(f"Recall: {model['recall']}")
+    print(f"F1: {model['f1']}")
+    print()
 
-    matrices = []
-    for coef in coef_df.iterrows():
-        matrices.append(np.array(coef[1]).reshape(len(all_heroes()), len(all_heroes())))
+    # matrices = []
+    # for coef in coef_df.iterrows():
+    #     matrices.append(np.array(coef[1]).reshape(len(all_heroes()), len(all_heroes())))
     
-    win_matrix = matrices[1]  # Win matrix
-    loss_matrix = matrices[0]  # Loss matrix
-    tie_matrix = matrices[2]  # Tie matrix
+    # win_matrix = matrices[1]  # Win matrix
+    # loss_matrix = matrices[0]  # Loss matrix
+    # tie_matrix = matrices[2]  # Tie matrix
 
-    # Get the hero names
-    hero_names = all_heroes() # list index is ID in matrix, but value is hero ID
-    hero_names = [id_to_hero(hero) for hero in hero_names]
+    # # Get the hero names
+    # hero_names = all_heroes() # list index is ID in matrix, but value is hero ID
+    # hero_names = [id_to_hero(hero) for hero in hero_names]
     
-    # print table of Their pick | Our pick | Win %
-    print(f'{"Their Pick":<20} {"Our Pick":<20} {"Win %":<5}')
-    print('-' * 45)
-    for i in range(len(all_heroes())):
-        matchup = win_matrix[i]
-        best_pick = np.argmax(matchup)
-        print(f"{hero_names[i]:<20} {hero_names[best_pick]:<20} {matchup[best_pick]:.2f}")
+    # # print top 5 heroes that are most likely to win against any other hero
+    # print("Hero         Top 5 hero counters")
+    # for hero_id in all_heroes():
+    #     hero_index = all_heroes().index(hero_id)
+    #     winrates = win_matrix[hero_index]
+    #     top5names = [hero_names[i] for i in np.argsort(winrates)[::-1][:5]]
+    #     top5rates = [winrates[i] for i in np.argsort(winrates)[::-1][:5]]
+    #     for i in range(5):
+    #         print(f"{hero_names[hero_index]:<12} {top5names[i]:<12} {top5rates[i]:.3f}")
