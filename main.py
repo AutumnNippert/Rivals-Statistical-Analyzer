@@ -1,88 +1,115 @@
-from api import *
-from data_manipulation import *
 import time
 import logging
+import argparse
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-RATE_LIMIT = 2  # seconds
+from config import RATE_LIMIT
+from api.player_api import update_user, get_stats
+from api.match_api import get_match_history, get_match_data
+from data.file_io import read_json, write_json
+from data.match_extraction import get_match_uids_from_match_history, get_players_from_match
+from utils.logging_config import setup_logging
 
-def get_match_uids():
-    player_uids = get_uids_from_player_files()
+setup_logging()
 
-    match_uids_set= set()
-    match_data_file = 'match_uids.json' # stores just a list of match_uids and if it was ranked or not
-    # { 'match_uid': '1234_1234_1234_1234_1234', 'gamoemode': 2 } # 2 is ranked, 1 is quick play
+def process_stats_files():
+    """Processes all 'stats_*' files in the current directory."""
+    for file_path in Path('.').glob('stats_*.json'):
+        time.sleep(RATE_LIMIT)
+        player_uid = file_path.stem.split('_')[1]
 
-    curr_uids = []
-    # if doesnt exist, create it
-    if Path(match_data_file).exists():
-        with open(match_data_file, 'r') as f:
-            try:
-                curr_uids = json.load(f)
-                match_uids_set.update(entry['match_uid'] for entry in curr_uids)  # Extract existing match_uids
-            except json.JSONDecodeError:
-                logging.error("Failed to parse JSON file, resetting...")
-                curr_uids = []
-
-    gamemode = 'ranked'
-
-    try:
-        for player in player_uids:
-            logging.info(f"Getting Match History for player UID={player}")
-            try:
-                res, output_file = get_match_history(player, gamemode)
-            except Exception as e:
-                logging.error(f"Error getting match history for {player}: {e}, skipping")
-                continue
-            if res:
-                logging.info(f"Got Match History for player UID={player}")
-                new_match_uids = get_match_uids_from_match_history(res)
-                
-                # Only add new UIDs
-                unique_new_uids = [uid for uid in new_match_uids if uid not in match_uids_set]
-                match_uids_set.update(unique_new_uids)
-
-                # Append new entries
-                for uid in unique_new_uids:
-                    curr_uids.append({'match_uid': uid, 'gamemode': gamemode})
-
-            time.sleep(RATE_LIMIT)  # Respect rate limit
-    except Exception as e:
-        logging.error(f"Error getting match history for {player}: {e}, skipping")
-    finally:
-        # Write the updated match UIDs to the file
-        with open(match_data_file, 'w') as f:
-            json.dump(curr_uids, f, indent=4)
-
-    # Print the final list of match UIDs
-    print(json.dumps(list(match_uids_set), indent=4))
-
-def get_match_data_files(uids:list[int]):
-    for uid in uids:
-        continued = False
-        logging.info(f"Getting Match Data for match UID={uid}")
-        try:
-            output_file = f'match_data_{uid}.json'
-            if Path(output_file).exists():
-                logging.info(f"Match data for {uid} already exists, skipping.")
-                continued = True
-                continue
-            res = get_match_data(uid)
-            #write to file
-            with open(output_file, 'w') as f:
-                json.dump(res, f, indent=4)
-        except Exception as e:
-            logging.error(f"Error getting match data for {uid}: {e}, skipping")
+        logging.info(f"Fetching match history for player UID={player_uid}")
+        history = get_match_history(player_uid)
+        if not history:
+            logging.error(f"Failed to retrieve match history for {player_uid}")
             continue
-        finally:
-            if not continued:
-                time.sleep(RATE_LIMIT)
+        
+        match_uids = get_match_uids_from_match_history(history)
+        for match_uid in match_uids:
+            match_data_file = f"match_data_{match_uid}.json"
+            if Path(match_data_file).exists():
+                logging.info(f"Skipping {match_data_file}, already exists.")
+                continue
 
-if __name__ == '__main__':
-    # match_uids = set()
-    # with open('match_uids.json', 'r') as f:
-    #     data = json.load(f)
-    #     match_uids.update(entry['match_uid'] for entry in data)
-    # get_match_data_files(list(match_uids))
+            logging.info(f"Fetching match data for {match_uid}")
+            match_data = get_match_data(match_uid)
+            if match_data:
+                write_json(match_data_file, match_data)
 
+def update_single_player(player_uid):
+    """Updates a single player's stats and retrieves match history."""
+    logging.info(f"Updating data for player UID={player_uid}")
+
+    update_user(player_uid)
+    stats = get_stats(player_uid)
+    if not stats:
+        logging.error(f"Failed to retrieve stats for {player_uid}")
+        return
+
+    history = get_match_history(player_uid)
+    if not history:
+        logging.error(f"Failed to retrieve match history for {player_uid}")
+        return
+
+    match_uids = get_match_uids_from_match_history(history)
+    for match_uid in match_uids:
+        match_data_file = f"match_data_{match_uid}.json"
+        if Path(match_data_file).exists():
+            logging.info(f"Skipping {match_data_file}, already exists.")
+            continue
+
+        logging.info(f"Fetching match data for {match_uid}")
+        match_data = get_match_data(match_uid)
+        if match_data:
+            write_json(match_data_file, match_data)
+
+def process_recursive_matches(player_uid, depth=1):
+    """Recursively fetch match data for players in the matches played by the given player."""
+    if depth < 1:
+        return
+
+    logging.info(f"Updating data for player UID={player_uid}")
+    update_user(player_uid)
+
+    logging.info(f"Fetching match history for player UID={player_uid}")
+    history = get_match_history(player_uid)
+    if not history:
+        logging.error(f"Failed to retrieve match history for {player_uid}")
+        return
+
+    match_uids = get_match_uids_from_match_history(history)
+    for match_uid in match_uids:
+        match_data_file = f"match_data_{match_uid}.json"
+        if Path(match_data_file).exists():
+            logging.info(f"Skipping {match_data_file}, already exists.")
+            continue
+
+        logging.info(f"Fetching match data for {match_uid}")
+        match_data = get_match_data(match_uid)
+        if match_data:
+            write_json(match_data_file, match_data)
+            players = get_players_from_match(match_data)
+            for player in players:
+                process_recursive_matches(player['player_uid'], depth - 1)
+
+def main():
+    """Main function to handle CLI arguments and execute commands."""
+    parser = argparse.ArgumentParser(description="Process player stats and match data.")
+    parser.add_argument("--player", "-p", type=str, help="Process a specific player UID.")
+    parser.add_argument("--all", "-a", action="store_true", help="Process all player stats files.")
+    parser.add_argument("--depth", "-d", type=int, default=1, help="Depth of recursive match fetching.")
+
+    args = parser.parse_args()
+
+    if args.player:
+        process_recursive_matches(args.player, args.depth)
+    elif args.all:
+        process_stats_files()
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logging.critical(f"Fatal error: {e}", exc_info=True)
